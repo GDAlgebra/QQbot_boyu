@@ -3,8 +3,8 @@ name: Check X and Send QQ Message
 on:
   schedule:
     # GitHub Actions cron uses UTC time.
-    # This example runs every 30 minutes.
-    - cron: "7,37 * * * *"
+    # Run every 5 minutes.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       message:
@@ -80,7 +80,19 @@ jobs:
           docker logs rsshub || true
           exit 1
 
+      - name: Check X for new post
+        id: check_x
+        env:
+          ACTION_MODE: check
+          QQ_TARGET_TYPE: ${{ vars.QQ_TARGET_TYPE }}
+          X_USERNAME: ${{ vars.X_USERNAME }}
+          X_RSS_URL: ${{ vars.X_RSS_URL }}
+          SEND_FIRST_RUN: ${{ vars.SEND_FIRST_RUN }}
+          MANUAL_MESSAGE: ${{ inputs.message }}
+        run: npm run check
+
       - name: Start NapCat in GitHub Actions
+        if: steps.check_x.outputs.should_send == 'true'
         env:
           NAPCAT_QQ: ${{ secrets.NAPCAT_QQ }}
           ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
@@ -160,6 +172,7 @@ jobs:
             mlikiowa/napcat-docker:latest
 
       - name: Prepare NapCat QR code
+        if: steps.check_x.outputs.should_send == 'true'
         run: |
           for i in $(seq 1 24); do
             docker cp napcat:/app/napcat/cache/qrcode.png .napcat-data/qrcode.png 2>/dev/null || true
@@ -176,6 +189,7 @@ jobs:
           echo "QR code image was not generated yet. Continue waiting in the next step."
 
       - name: Upload NapCat QR code
+        if: steps.check_x.outputs.should_send == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: napcat-qrcode
@@ -183,6 +197,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Wait for NapCat login and OneBot HTTP
+        if: steps.check_x.outputs.should_send == 'true'
         env:
           ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
         run: |
@@ -211,19 +226,18 @@ jobs:
           docker logs napcat || true
           exit 1
 
-      - name: Check X and send QQ message
+      - name: Send QQ message
+        if: steps.check_x.outputs.should_send == 'true'
         env:
+          ACTION_MODE: send
           ONEBOT_HTTP_URL: http://127.0.0.1:3000
           ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
           QQ_TARGET_TYPE: ${{ vars.QQ_TARGET_TYPE }}
           QQ_TARGET_ID: ${{ secrets.QQ_TARGET_ID }}
-          X_USERNAME: ${{ vars.X_USERNAME }}
-          X_RSS_URL: ${{ vars.X_RSS_URL }}
-          SEND_FIRST_RUN: ${{ vars.SEND_FIRST_RUN }}
-          MANUAL_MESSAGE: ${{ inputs.message }}
         run: npm run check
 
       - name: Save latest post state
+        if: steps.check_x.outputs.state_changed == 'true'
         run: |
           if [ -n "$(git status --porcelain state/latest-post.json)" ]; then
             git config user.name "github-actions[bot]"
@@ -236,7 +250,7 @@ jobs:
           fi
 
       - name: Stop NapCat
-        if: always()
+        if: always() && steps.check_x.outputs.should_send == 'true'
         run: |
           docker logs --tail 120 napcat || true
           docker stop napcat || true
@@ -249,7 +263,7 @@ jobs:
           docker stop rsshub-redis || true
 
       - name: Save NapCat data cache
-        if: always()
+        if: always() && steps.check_x.outputs.should_send == 'true'
         uses: actions/cache/save@v4
         with:
           path: .napcat-data
