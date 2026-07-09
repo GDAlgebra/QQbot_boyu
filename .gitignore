@@ -10,6 +10,7 @@ state/
 
 # GitHub Actions NapCat runtime cache
 .napcat-data/
+.run/
 
 # Dependencies and caches
 node_modules/
