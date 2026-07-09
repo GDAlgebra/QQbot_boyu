@@ -47,26 +47,45 @@ await sendOneBotMessage(config, [{ type: "text", data: { text } }]);
 console.log("发现新推文，QQ 消息发送成功。");
 
 async function fetchLatestPost({ rssUrl, username }) {
-  const url = rssUrl || `https://rsshub.app/twitter/user/${encodeURIComponent(username)}`;
-  const response = await fetch(url, {
-    headers: {
-      "user-agent": "QQ-X-Scheduled-Notifier/1.0",
-      accept: "application/rss+xml, application/xml, text/xml, */*",
-    },
-    signal: AbortSignal.timeout(30000),
-  });
+  const candidates = rssUrl
+    ? [rssUrl]
+    : [
+        `http://127.0.0.1:1200/twitter/user/${encodeURIComponent(username)}`,
+        `https://rsshub.app/twitter/user/${encodeURIComponent(username)}`,
+        `https://nitter.net/${encodeURIComponent(username)}/rss`,
+        `https://xcancel.com/${encodeURIComponent(username)}/rss`,
+      ];
 
-  const text = await response.text();
-  if (!response.ok) {
-    fail(`RSS 请求失败：HTTP ${response.status}\n${text.slice(0, 500)}`);
+  const errors = [];
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "user-agent": "QQ-X-Scheduled-Notifier/1.0",
+          accept: "application/rss+xml, application/xml, text/xml, */*",
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        errors.push(`${url} -> HTTP ${response.status}: ${text.slice(0, 120).replace(/\s+/g, " ")}`);
+        continue;
+      }
+
+      const post = parseItems(text)[0];
+      if (!post) {
+        errors.push(`${url} -> 没有解析到推文`);
+        continue;
+      }
+
+      return { ...post, source: url };
+    } catch (error) {
+      errors.push(`${url} -> ${error.message}`);
+    }
   }
 
-  const post = parseItems(text)[0];
-  if (!post) {
-    fail("RSS 里没有解析到推文。");
-  }
-
-  return { ...post, source: url };
+  fail(["所有 RSS 来源都请求失败。", ...errors.map((line) => `- ${line}`)].join("\n"));
 }
 
 async function sendOneBotMessage({ onebotUrl, token, targetType, targetId }, message) {
