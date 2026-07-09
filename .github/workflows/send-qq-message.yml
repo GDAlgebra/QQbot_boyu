@@ -3,8 +3,8 @@ name: Check X and Send QQ Message
 on:
   schedule:
     # GitHub Actions cron uses UTC time.
-    # Run every 5 minutes.
-    - cron: "*/5 * * * *"
+    # Run every 30 minutes.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       message:
