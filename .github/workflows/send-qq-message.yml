@@ -22,12 +22,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: true
 
       - name: Restore NapCat data cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .napcat-data
           key: napcat-data-${{ runner.os }}-${{ github.run_id }}
@@ -35,9 +35,9 @@ jobs:
             napcat-data-${{ runner.os }}-
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Start RSSHub in GitHub Actions
         env:
@@ -190,7 +190,7 @@ jobs:
 
       - name: Upload NapCat QR code
         if: steps.check_x.outputs.should_send == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: napcat-qrcode
           path: .napcat-data/qrcode.png
@@ -264,7 +264,7 @@ jobs:
 
       - name: Save NapCat data cache
         if: always() && steps.check_x.outputs.should_send == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .napcat-data
           key: napcat-data-${{ runner.os }}-${{ github.run_id }}
