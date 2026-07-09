@@ -58,6 +58,29 @@ jobs:
             -v "$PWD/.napcat-data/cache:/app/napcat/cache" \
             mlikiowa/napcat-docker:latest
 
+      - name: Prepare NapCat QR code
+        run: |
+          for i in $(seq 1 24); do
+            docker cp napcat:/app/napcat/cache/qrcode.png .napcat-data/qrcode.png 2>/dev/null || true
+            if [ -s .napcat-data/qrcode.png ]; then
+              echo "NapCat QR code is ready."
+              exit 0
+            fi
+
+            echo "Waiting for QR code image... attempt $i/24"
+            docker logs --tail 60 napcat || true
+            sleep 5
+          done
+
+          echo "QR code image was not generated yet. Continue waiting in the next step."
+
+      - name: Upload NapCat QR code
+        uses: actions/upload-artifact@v4
+        with:
+          name: napcat-qrcode
+          path: .napcat-data/qrcode.png
+          if-no-files-found: ignore
+
       - name: Wait for NapCat login and OneBot HTTP
         env:
           ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
@@ -86,14 +109,6 @@ jobs:
           docker cp napcat:/app/napcat/cache/qrcode.png .napcat-data/qrcode.png 2>/dev/null || true
           docker logs napcat || true
           exit 1
-
-      - name: Upload NapCat QR code
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: napcat-qrcode
-          path: .napcat-data/qrcode.png
-          if-no-files-found: ignore
 
       - name: Check X and send QQ message
         env:
