@@ -1,6 +1,6 @@
 # QQ X Scheduled Notifier
 
-This project runs in GitHub Actions. It checks an X/Twitter RSS feed every 5 minutes. If a new post is found, it starts NapCat in Docker, logs in to QQ using the cached login data, sends the QQ message, then shuts NapCat down.
+This project runs in GitHub Actions. It checks an X/Twitter RSS feed every 30 minutes. If a new post is found, it starts NapCat in Docker, logs in to QQ using the cached login data, sends the QQ message, then shuts NapCat down.
 
 ## Current Flow
 
