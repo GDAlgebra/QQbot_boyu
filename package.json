@@ -1,0 +1,13 @@
+{
+  "name": "qq-x-scheduled-notifier",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "send": "node scripts/check-x-and-send.mjs",
+    "check": "node scripts/check-x-and-send.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
