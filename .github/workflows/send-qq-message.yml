@@ -39,6 +39,47 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Start RSSHub in GitHub Actions
+        env:
+          TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
+          TWITTER_CT0: ${{ secrets.TWITTER_CT0 }}
+          TWITTER_COOKIE: ${{ secrets.TWITTER_COOKIE }}
+        run: |
+          docker network create qq-notifier || true
+          docker run -d \
+            --name rsshub-redis \
+            --network qq-notifier \
+            redis:7-alpine
+
+          docker run -d \
+            --name rsshub \
+            --network qq-notifier \
+            -p 1200:1200 \
+            -e NODE_ENV=production \
+            -e CACHE_TYPE=redis \
+            -e REDIS_URL=redis://rsshub-redis:6379/ \
+            -e REQUEST_RETRY=2 \
+            -e REQUEST_TIMEOUT=20000 \
+            -e TWITTER_AUTH_TOKEN="$TWITTER_AUTH_TOKEN" \
+            -e TWITTER_CT0="$TWITTER_CT0" \
+            -e TWITTER_COOKIE="$TWITTER_COOKIE" \
+            diygod/rsshub:latest
+
+          for i in $(seq 1 36); do
+            if curl -fsS http://127.0.0.1:1200/healthz >/dev/null 2>&1 || curl -fsS http://127.0.0.1:1200/ >/dev/null 2>&1; then
+              echo "RSSHub is ready."
+              exit 0
+            fi
+
+            echo "Waiting for RSSHub... attempt $i/36"
+            docker logs --tail 80 rsshub || true
+            sleep 5
+          done
+
+          echo "RSSHub did not become ready. Full logs:"
+          docker logs rsshub || true
+          exit 1
+
       - name: Start NapCat in GitHub Actions
         env:
           NAPCAT_QQ: ${{ secrets.NAPCAT_QQ }}
@@ -199,6 +240,13 @@ jobs:
         run: |
           docker logs --tail 120 napcat || true
           docker stop napcat || true
+
+      - name: Stop RSSHub
+        if: always()
+        run: |
+          docker logs --tail 120 rsshub || true
+          docker stop rsshub || true
+          docker stop rsshub-redis || true
 
       - name: Save NapCat data cache
         if: always()
