@@ -1,8 +1,9 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 
 await loadDotEnv();
 
 const config = {
+  mode: process.env.ACTION_MODE || "check-and-send",
   onebotUrl: process.env.ONEBOT_HTTP_URL || "",
   token: process.env.ONEBOT_ACCESS_TOKEN || "",
   targetType: process.env.QQ_TARGET_TYPE || "private",
@@ -10,41 +11,72 @@ const config = {
   rssUrl: process.env.X_RSS_URL || "",
   username: process.env.X_USERNAME || "",
   stateFile: process.env.STATE_FILE || "state/latest-post.json",
+  messageFile: process.env.MESSAGE_FILE || ".run/message.txt",
   sendFirstRun: process.env.SEND_FIRST_RUN === "1",
   dryRun: process.env.DRY_RUN === "1",
   manualMessage: process.env.MANUAL_MESSAGE || "",
 };
 
-validateBasicConfig(config);
-
-const latestPost = config.manualMessage
-  ? buildManualPost(config.manualMessage)
-  : await fetchLatestPost(config);
-
-const previousPost = await readState(config.stateFile);
-if (!config.manualMessage && isSamePost(previousPost, latestPost)) {
-  console.log("没有发现新推文，本次不发送。");
-  process.exit(0);
+if (config.mode === "check") {
+  await checkForMessage(config);
+} else if (config.mode === "send") {
+  await sendPreparedMessage(config);
+} else {
+  const shouldSend = await checkForMessage(config);
+  if (shouldSend) await sendPreparedMessage(config);
 }
 
-await writeState(config.stateFile, latestPost);
+async function checkForMessage(config) {
+  validateBasicConfig(config);
 
-if (!config.manualMessage && !config.sendFirstRun && !previousPost.id) {
-  console.log("第一次运行：只记录当前最新推文，不发送。");
-  console.log("如果希望第一次运行也发送，请把 SEND_FIRST_RUN 设置为 1。");
-  process.exit(0);
+  if (config.manualMessage) {
+    await writeTextFile(config.messageFile, config.manualMessage);
+    await setOutput("should_send", "true");
+    await setOutput("state_changed", "false");
+    console.log("Manual QQ message is required.");
+    return true;
+  }
+
+  const latestPost = await fetchLatestPost(config);
+
+  const previousPost = await readState(config.stateFile);
+  if (!config.manualMessage && isSamePost(previousPost, latestPost)) {
+    console.log("No new X post found. QQ will not be started.");
+    await setOutput("should_send", "false");
+    await setOutput("state_changed", "false");
+    return false;
+  }
+
+  await writeState(config.stateFile, latestPost);
+  await setOutput("state_changed", "true");
+
+  if (!config.manualMessage && !config.sendFirstRun && !previousPost.id) {
+    console.log("First run: recorded the latest post without sending.");
+    console.log("Set SEND_FIRST_RUN=1 if you want the first run to send the latest post.");
+    await setOutput("should_send", "false");
+    return false;
+  }
+
+  const text = config.manualMessage || formatPost(latestPost, config);
+  await writeTextFile(config.messageFile, text);
+  await setOutput("should_send", "true");
+  console.log("A QQ message is required.");
+  return true;
 }
 
-const text = config.manualMessage || formatPost(latestPost, config);
-if (config.dryRun) {
-  console.log("DRY_RUN=1，只预览消息，不会发送。");
-  console.log(text);
-  process.exit(0);
-}
+async function sendPreparedMessage(config) {
+  validateSendConfig(config);
 
-validateSendConfig(config);
-await sendOneBotMessage(config, [{ type: "text", data: { text } }]);
-console.log("发现新推文，QQ 消息发送成功。");
+  const text = await readFile(config.messageFile, "utf8");
+  if (config.dryRun) {
+    console.log("DRY_RUN=1, preview only. No QQ message will be sent.");
+    console.log(text);
+    return;
+  }
+
+  await sendOneBotMessage(config, [{ type: "text", data: { text } }]);
+  console.log("QQ message sent successfully.");
+}
 
 async function fetchLatestPost({ rssUrl, username }) {
   const candidates = rssUrl
@@ -75,7 +107,7 @@ async function fetchLatestPost({ rssUrl, username }) {
 
       const post = parseItems(text)[0];
       if (!post) {
-        errors.push(`${url} -> 没有解析到推文`);
+        errors.push(`${url} -> no post parsed`);
         continue;
       }
 
@@ -85,7 +117,7 @@ async function fetchLatestPost({ rssUrl, username }) {
     }
   }
 
-  fail(["所有 RSS 来源都请求失败。", ...errors.map((line) => `- ${line}`)].join("\n"));
+  fail(["All RSS sources failed.", ...errors.map((line) => `- ${line}`)].join("\n"));
 }
 
 async function sendOneBotMessage({ onebotUrl, token, targetType, targetId }, message) {
@@ -107,7 +139,7 @@ async function sendOneBotMessage({ onebotUrl, token, targetType, targetId }, mes
 
   const text = await response.text();
   if (!response.ok) {
-    fail(`QQ 发送接口失败：HTTP ${response.status}\n${text}`);
+    fail(`QQ send API failed: HTTP ${response.status}\n${text}`);
   }
 
   let data;
@@ -118,7 +150,7 @@ async function sendOneBotMessage({ onebotUrl, token, targetType, targetId }, mes
   }
 
   if (data?.status && data.status !== "ok") {
-    fail(`QQ 发送接口返回失败：${text}`);
+    fail(`QQ send API returned failure: ${text}`);
   }
 }
 
@@ -131,11 +163,20 @@ async function readState(path) {
 }
 
 async function writeState(path, post) {
+  await writeTextFile(path, `${JSON.stringify(post, null, 2)}\n`);
+}
+
+async function writeTextFile(path, text) {
   const slashIndex = path.lastIndexOf("/");
   if (slashIndex !== -1) {
     await mkdir(path.slice(0, slashIndex), { recursive: true });
   }
-  await writeFile(path, `${JSON.stringify(post, null, 2)}\n`, "utf8");
+  await writeFile(path, text, "utf8");
+}
+
+async function setOutput(name, value) {
+  if (!process.env.GITHUB_OUTPUT) return;
+  await appendFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`, "utf8");
 }
 
 function parseItems(xml) {
@@ -166,23 +207,13 @@ function parseItem(item) {
 
 function formatPost(post, { username }) {
   return [
-    username ? `X 新推文：@${username}` : "X 新推文",
-    post.published ? `时间：${post.published}` : "",
-    `内容：${post.title}`,
-    post.link ? `链接：${post.link}` : "",
+    username ? `X new post: @${username}` : "X new post",
+    post.published ? `Time: ${post.published}` : "",
+    `Content: ${post.title}`,
+    post.link ? `Link: ${post.link}` : "",
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-function buildManualPost(text) {
-  return {
-    id: `manual-${Date.now()}`,
-    title: text,
-    link: "",
-    published: new Date().toISOString(),
-    source: "manual",
-  };
 }
 
 function isSamePost(previous, current) {
@@ -215,21 +246,17 @@ function decodeXml(text) {
 
 function validateBasicConfig({ targetType, rssUrl, username }) {
   if (!["private", "group"].includes(targetType)) {
-    fail("QQ_TARGET_TYPE 只能填写 private 或 group。");
+    fail("QQ_TARGET_TYPE must be private or group.");
   }
 
   if (!rssUrl && !username && !process.env.MANUAL_MESSAGE) {
-    fail("请设置 X_USERNAME，或直接设置 X_RSS_URL。");
+    fail("Please set X_USERNAME, or set X_RSS_URL directly.");
   }
 }
 
 function validateSendConfig({ onebotUrl, targetId }) {
-  if (!onebotUrl) fail("缺少 ONEBOT_HTTP_URL。");
-  if (!/^\d+$/.test(String(targetId))) fail("QQ_TARGET_ID 必须是纯数字 QQ 号或群号。");
-
-  if (/^(https?:\/\/)?(127\.0\.0\.1|localhost)(:\d+)?/i.test(onebotUrl)) {
-    fail("GitHub Actions 不能访问你电脑上的 localhost / 127.0.0.1，请使用公网可访问的 QQ 发送接口。");
-  }
+  if (!onebotUrl) fail("Missing ONEBOT_HTTP_URL.");
+  if (!/^\d+$/.test(String(targetId))) fail("QQ_TARGET_ID must be a numeric QQ id or group id.");
 }
 
 function trimEnd(text, suffix) {
