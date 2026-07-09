@@ -1,16 +1,14 @@
 name: Check X and Send QQ Message
 
 on:
-  schedule:
-    # GitHub Actions cron uses UTC time.
-    # Run every 30 minutes.
-    - cron: "25,55 * * * *"
   workflow_dispatch:
     inputs:
       message:
         description: "Optional manual QQ message. Leave empty to check X/RSS."
         required: false
         type: string
+  schedule:
+    - cron: "14,44 * * * *"
 
 permissions:
   contents: write
