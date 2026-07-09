@@ -8,7 +8,7 @@ on:
         required: false
         type: string
   schedule:
-    - cron: "23,53 * * * *"
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: write
