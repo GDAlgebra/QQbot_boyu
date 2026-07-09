@@ -42,8 +42,68 @@ jobs:
       - name: Start NapCat in GitHub Actions
         env:
           NAPCAT_QQ: ${{ secrets.NAPCAT_QQ }}
+          ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
         run: |
+          if [ -z "$NAPCAT_QQ" ]; then
+            echo "NAPCAT_QQ secret is required."
+            exit 1
+          fi
+
           mkdir -p .napcat-data/QQ .napcat-data/config .napcat-data/cache
+          cat > ".napcat-data/config/onebot11_${NAPCAT_QQ}.json" <<EOF
+          {
+            "network": {
+              "httpServers": [
+                {
+                  "enable": true,
+                  "name": "github-actions-http",
+                  "host": "0.0.0.0",
+                  "port": 3000,
+                  "enableCors": true,
+                  "enableWebsocket": false,
+                  "messagePostFormat": "array",
+                  "token": "${ONEBOT_ACCESS_TOKEN}",
+                  "debug": true
+                }
+              ],
+              "httpSseServers": [],
+              "httpClients": [],
+              "websocketServers": [],
+              "websocketClients": [],
+              "plugins": []
+            },
+            "musicSignUrl": "",
+            "enableLocalFile2Url": false,
+            "parseMultMsg": false,
+            "imageDownloadProxy": "",
+            "timeout": {
+              "baseTimeout": 10000,
+              "uploadSpeedKBps": 256,
+              "downloadSpeedKBps": 256,
+              "maxTimeout": 1800000
+            }
+          }
+          EOF
+          cat > ".napcat-data/config/napcat_${NAPCAT_QQ}.json" <<EOF
+          {
+            "fileLog": false,
+            "consoleLog": true,
+            "fileLogLevel": "debug",
+            "consoleLogLevel": "info",
+            "packetBackend": "auto",
+            "packetServer": "",
+            "o3HookMode": 1,
+            "bypass": {
+              "hook": false,
+              "window": false,
+              "module": false,
+              "process": false,
+              "container": false,
+              "js": false
+            },
+            "autoTimeSync": true
+          }
+          EOF
 
           docker run -d \
             --name napcat \
