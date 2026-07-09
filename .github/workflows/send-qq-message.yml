@@ -43,23 +43,20 @@ jobs:
         env:
           NAPCAT_QQ: ${{ secrets.NAPCAT_QQ }}
         run: |
-          mkdir -p .napcat-data/QQ .napcat-data/config
-          napcat_args=()
-          if [ -n "$NAPCAT_QQ" ]; then
-            napcat_args=(-q "$NAPCAT_QQ")
-          fi
+          mkdir -p .napcat-data/QQ .napcat-data/config .napcat-data/cache
 
           docker run -d \
             --name napcat \
             -e NAPCAT_UID="$(id -u)" \
             -e NAPCAT_GID="$(id -g)" \
+            -e ACCOUNT="$NAPCAT_QQ" \
             -p 3000:3000 \
             -p 3001:3001 \
             -p 6099:6099 \
             -v "$PWD/.napcat-data/QQ:/app/.config/QQ" \
             -v "$PWD/.napcat-data/config:/app/napcat/config" \
-            mlikiowa/napcat-docker:latest \
-            "${napcat_args[@]}"
+            -v "$PWD/.napcat-data/cache:/app/napcat/cache" \
+            mlikiowa/napcat-docker:latest
 
       - name: Wait for NapCat login and OneBot HTTP
         env:
@@ -80,13 +77,23 @@ jobs:
             fi
 
             echo "Waiting for NapCat login and OneBot HTTP... attempt $i/72"
+            docker cp napcat:/app/napcat/cache/qrcode.png .napcat-data/qrcode.png 2>/dev/null || true
             docker logs --tail 80 napcat || true
             sleep 5
           done
 
           echo "NapCat did not become ready. Full logs:"
+          docker cp napcat:/app/napcat/cache/qrcode.png .napcat-data/qrcode.png 2>/dev/null || true
           docker logs napcat || true
           exit 1
+
+      - name: Upload NapCat QR code
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: napcat-qrcode
+          path: .napcat-data/qrcode.png
+          if-no-files-found: ignore
 
       - name: Check X and send QQ message
         env:
