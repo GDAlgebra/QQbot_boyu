@@ -1,0 +1,118 @@
+name: Check X and Send QQ Message
+
+on:
+  schedule:
+    # GitHub Actions cron uses UTC time.
+    # This example runs every 30 minutes.
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Optional manual QQ message. Leave empty to check X/RSS."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Restore NapCat data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .napcat-data
+          key: napcat-data-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            napcat-data-${{ runner.os }}-
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Start NapCat in GitHub Actions
+        run: |
+          mkdir -p .napcat-data/QQ .napcat-data/config
+          docker run -d \
+            --name napcat \
+            -e NAPCAT_UID="$(id -u)" \
+            -e NAPCAT_GID="$(id -g)" \
+            -p 3000:3000 \
+            -p 3001:3001 \
+            -p 6099:6099 \
+            -v "$PWD/.napcat-data/QQ:/app/.config/QQ" \
+            -v "$PWD/.napcat-data/config:/app/napcat/config" \
+            mlikiowa/napcat-docker:latest
+
+      - name: Wait for NapCat login and OneBot HTTP
+        env:
+          ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
+        run: |
+          auth_header=()
+          if [ -n "$ONEBOT_ACCESS_TOKEN" ]; then
+            auth_header=(-H "Authorization: Bearer $ONEBOT_ACCESS_TOKEN")
+          fi
+
+          for i in $(seq 1 72); do
+            if curl -fsS -X POST "${auth_header[@]}" \
+              -H "Content-Type: application/json" \
+              -d '{}' \
+              http://127.0.0.1:3000/get_login_info; then
+              echo "NapCat OneBot HTTP is ready."
+              exit 0
+            fi
+
+            echo "Waiting for NapCat login and OneBot HTTP... attempt $i/72"
+            docker logs --tail 80 napcat || true
+            sleep 5
+          done
+
+          echo "NapCat did not become ready. Full logs:"
+          docker logs napcat || true
+          exit 1
+
+      - name: Check X and send QQ message
+        env:
+          ONEBOT_HTTP_URL: http://127.0.0.1:3000
+          ONEBOT_ACCESS_TOKEN: ${{ secrets.ONEBOT_ACCESS_TOKEN }}
+          QQ_TARGET_TYPE: ${{ vars.QQ_TARGET_TYPE }}
+          QQ_TARGET_ID: ${{ secrets.QQ_TARGET_ID }}
+          X_USERNAME: ${{ vars.X_USERNAME }}
+          X_RSS_URL: ${{ vars.X_RSS_URL }}
+          SEND_FIRST_RUN: ${{ vars.SEND_FIRST_RUN }}
+          MANUAL_MESSAGE: ${{ inputs.message }}
+        run: npm run check
+
+      - name: Save latest post state
+        run: |
+          if [ -n "$(git status --porcelain state/latest-post.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state/latest-post.json
+            git commit -m "Update latest X post state"
+            git push
+          else
+            echo "No state change."
+          fi
+
+      - name: Stop NapCat
+        if: always()
+        run: |
+          docker logs --tail 120 napcat || true
+          docker stop napcat || true
+
+      - name: Save NapCat data cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .napcat-data
+          key: napcat-data-${{ runner.os }}-${{ github.run_id }}
