@@ -40,8 +40,15 @@ jobs:
           node-version: "20"
 
       - name: Start NapCat in GitHub Actions
+        env:
+          NAPCAT_QQ: ${{ secrets.NAPCAT_QQ }}
         run: |
           mkdir -p .napcat-data/QQ .napcat-data/config
+          napcat_args=()
+          if [ -n "$NAPCAT_QQ" ]; then
+            napcat_args=(-q "$NAPCAT_QQ")
+          fi
+
           docker run -d \
             --name napcat \
             -e NAPCAT_UID="$(id -u)" \
@@ -51,7 +58,8 @@ jobs:
             -p 6099:6099 \
             -v "$PWD/.napcat-data/QQ:/app/.config/QQ" \
             -v "$PWD/.napcat-data/config:/app/napcat/config" \
-            mlikiowa/napcat-docker:latest
+            mlikiowa/napcat-docker:latest \
+            "${napcat_args[@]}"
 
       - name: Wait for NapCat login and OneBot HTTP
         env:
