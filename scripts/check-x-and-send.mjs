@@ -12,6 +12,7 @@ const config = {
   username: process.env.X_USERNAME || "",
   stateFile: process.env.STATE_FILE || "state/latest-post.json",
   messageFile: process.env.MESSAGE_FILE || ".run/message.txt",
+  preparedMessageFile: process.env.PREPARED_MESSAGE_FILE || ".run/message.json",
   sendFirstRun: process.env.SEND_FIRST_RUN === "1",
   dryRun: process.env.DRY_RUN === "1",
   manualMessage: process.env.MANUAL_MESSAGE || "",
@@ -31,6 +32,7 @@ async function checkForMessage(config) {
 
   if (config.manualMessage) {
     await writeTextFile(config.messageFile, config.manualMessage);
+    await writeJsonFile(config.preparedMessageFile, { text: config.manualMessage, images: [] });
     await setOutput("should_send", "true");
     await setOutput("state_changed", "false");
     console.log("Manual QQ message is required.");
@@ -59,6 +61,7 @@ async function checkForMessage(config) {
 
   const text = config.manualMessage || formatPost(latestPost, config);
   await writeTextFile(config.messageFile, text);
+  await writeJsonFile(config.preparedMessageFile, { text, images: latestPost.images || [] });
   await setOutput("should_send", "true");
   console.log("A QQ message is required.");
   return true;
@@ -67,15 +70,38 @@ async function checkForMessage(config) {
 async function sendPreparedMessage(config) {
   validateSendConfig(config);
 
-  const text = await readFile(config.messageFile, "utf8");
+  const prepared = await readPreparedMessage(config);
+  const message = buildOneBotMessage(prepared.text, prepared.images);
   if (config.dryRun) {
     console.log("DRY_RUN=1, preview only. No QQ message will be sent.");
-    console.log(text);
+    console.log(prepared.text);
+    console.log(`Images: ${prepared.images.length}`);
+    for (const image of prepared.images) console.log(`- ${image}`);
     return;
   }
 
-  await sendOneBotMessage(config, [{ type: "text", data: { text } }]);
-  console.log("QQ message sent successfully.");
+  await sendOneBotMessage(config, message);
+  console.log(`QQ message sent successfully with ${prepared.images.length} image(s).`);
+}
+
+async function readPreparedMessage(config) {
+  try {
+    const prepared = JSON.parse(await readFile(config.preparedMessageFile, "utf8"));
+    return {
+      text: String(prepared.text || ""),
+      images: Array.isArray(prepared.images) ? prepared.images.filter(isHttpUrl) : [],
+    };
+  } catch {
+    return { text: await readFile(config.messageFile, "utf8"), images: [] };
+  }
+}
+
+function buildOneBotMessage(text, images) {
+  const message = [{ type: "text", data: { text } }];
+  for (const image of images) {
+    message.push({ type: "image", data: { file: image } });
+  }
+  return message;
 }
 
 async function fetchLatestPost({ rssUrl, username }) {
@@ -163,7 +189,11 @@ async function readState(path) {
 }
 
 async function writeState(path, post) {
-  await writeTextFile(path, `${JSON.stringify(post, null, 2)}\n`);
+  await writeJsonFile(path, post);
+}
+
+async function writeJsonFile(path, value) {
+  await writeTextFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 async function writeTextFile(path, text) {
@@ -193,6 +223,7 @@ function parseItem(item) {
   const published = decodeXml(readTag(item, "pubDate") || readTag(item, "published") || readTag(item, "updated") || "");
   const html = decodeXml(readTag(item, "description") || readTag(item, "summary") || "");
   const description = decodeXml(stripTags(html));
+  const images = extractImageUrls(item, html);
   const id = guid || link || title;
 
   if (!id || (!title && !description)) return null;
@@ -202,7 +233,45 @@ function parseItem(item) {
     title: title || description,
     link,
     published,
+    images,
   };
+}
+
+function extractImageUrls(item, html) {
+  const urls = [];
+
+  for (const tag of html.match(/<img\b[^>]*>/gi) || []) {
+    addImageUrl(urls, readAttribute(tag, "src") || readAttribute(tag, "data-src"));
+  }
+
+  for (const tag of item.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*>/gi) || []) {
+    const type = readAttribute(tag, "type").toLowerCase();
+    const medium = readAttribute(tag, "medium").toLowerCase();
+    const url = readAttribute(tag, "url");
+    if (!type || type.startsWith("image/") || medium === "image" || looksLikeImageUrl(url)) {
+      addImageUrl(urls, url);
+    }
+  }
+
+  return [...new Set(urls)];
+}
+
+function addImageUrl(urls, rawUrl) {
+  const url = decodeXml(rawUrl || "");
+  if (isHttpUrl(url)) urls.push(url);
+}
+
+function readAttribute(tag, name) {
+  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, "i"));
+  return match ? match[1] : "";
+}
+
+function looksLikeImageUrl(url) {
+  return /\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url);
+}
+
+function isHttpUrl(url) {
+  return /^https?:\/\/\S+$/i.test(String(url));
 }
 
 function formatPost(post, { username }) {
